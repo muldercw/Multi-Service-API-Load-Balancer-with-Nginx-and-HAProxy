@@ -1,0 +1,154 @@
+version: '3'
+services:
+  website:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    networks:
+      - app-network
+    environment:
+      - API_ENDPOINT= http://localhost:8080
+    depends_on:
+      - load-balancer
+    command: >- 
+      /bin/sh -c "truncate -s 0 /usr/share/nginx/html/index.html && \
+      echo '<html><head><title>Website</title></head><body>' >> /usr/share/nginx/html/index.html && \
+      echo '<form onsubmit=\"submitForm(); return false;\">' >> /usr/share/nginx/html/index.html && \
+      echo '    <input type=\"text\" id=\"user_input\"/>' >> /usr/share/nginx/html/index.html && \
+      echo '    <input type=\"submit\" value=\"Submit\"/>' >> /usr/share/nginx/html/index.html && \
+      echo '</form>' >> /usr/share/nginx/html/index.html && \
+      echo '<p id=\"response\">Response: </p>' >> /usr/share/nginx/html/index.html && \
+      echo '<script>' >> /usr/share/nginx/html/index.html && \
+      echo 'function submitForm() {' >> /usr/share/nginx/html/index.html && \
+      echo '    var userInput = document.getElementById(\"user_input\").value;' >> /usr/share/nginx/html/index.html && \
+      echo '    console.log(\"User Input:\", userInput);' >> /usr/share/nginx/html/index.html && \
+      echo '    fetch(\"http://localhost:8080\", {' >> /usr/share/nginx/html/index.html && \
+      echo '        method: \"POST\",' >> /usr/share/nginx/html/index.html && \
+      echo '        body: JSON.stringify({ \"data\": userInput }),' >> /usr/share/nginx/html/index.html && \
+      echo '        headers: {' >> /usr/share/nginx/html/index.html && \
+      echo '            \"Content-Type\": \"application/json\",' >> /usr/share/nginx/html/index.html && \
+      echo '        },' >> /usr/share/nginx/html/index.html && \
+      echo '    })' >> /usr/share/nginx/html/index.html && \
+      echo '    .then((response) => response.text())' >> /usr/share/nginx/html/index.html && \
+      echo '    .then((data) => {' >> /usr/share/nginx/html/index.html && \
+      echo '        console.log(\"Response Data:\", data);' >> /usr/share/nginx/html/index.html &&  \
+      echo '        document.getElementById(\"response\").innerText = \"Response: \" + data;' >> /usr/share/nginx/html/index.html && \
+      echo '    })' >> /usr/share/nginx/html/index.html && \
+      echo '    .catch((error) => {' >> /usr/share/nginx/html/index.html && \
+      echo '        console.error(\"Error:\", error);' >> /usr/share/nginx/html/index.html && \
+      echo '    });' >> /usr/share/nginx/html/index.html && \
+      echo '}' >> /usr/share/nginx/html/index.html && \
+      echo '</script>' >> /usr/share/nginx/html/index.html && \
+      echo '</body></html>' >> /usr/share/nginx/html/index.html && \
+      nginx -g 'daemon off;'" 
+
+  load-balancer:
+    image: haproxy:latest 
+    ports:
+      - "8080:80"
+    networks:
+      - app-network
+    depends_on:
+      - api1
+      - api2
+      - api3
+    command: >
+      /bin/sh -c "echo 'global' > ~/haproxy.cfg && \
+        echo '    maxconn 4096' >> ~/haproxy.cfg && \
+        echo '' >> ~/haproxy.cfg && \
+        echo 'defaults' >> ~/haproxy.cfg && \
+        echo '    mode http' >> ~/haproxy.cfg && \
+        echo '    balance roundrobin' >> ~/haproxy.cfg && \
+        echo '    option forwardfor' >> ~/haproxy.cfg && \
+        echo '    option http-server-close' >> ~/haproxy.cfg && \
+        echo '    option httplog' >> ~/haproxy.cfg && \
+        echo '    timeout connect 5s' >> ~/haproxy.cfg && \
+        echo '    timeout client 5s' >> ~/haproxy.cfg && \
+        echo '    timeout server 5s' >> ~/haproxy.cfg && \
+        echo '' >> ~/haproxy.cfg && \
+        echo 'frontend http-in' >> ~/haproxy.cfg && \
+        echo '    bind *:80' >> ~/haproxy.cfg && \
+        echo '    default_backend backend-servers' >> ~/haproxy.cfg && \
+        echo '' >> ~/haproxy.cfg && \
+        echo 'backend backend-servers' >> ~/haproxy.cfg && \
+        echo '    balance roundrobin' >> ~/haproxy.cfg && \
+        echo 'server api1 api1:8001 check' >> ~/haproxy.cfg && \
+        echo 'server api2 api2:8002 check' >> ~/haproxy.cfg && \
+        echo 'server api3 api3:8003 check' >> ~/haproxy.cfg && \
+        echo 'log /dev/log local0' >> ~/haproxy.cfg && \
+        echo '# Add CORS headers to responses' >> ~/haproxy.cfg && \
+        echo 'http-response set-header Access-Control-Allow-Origin *' >> ~/haproxy.cfg && \
+        echo 'http-response set-header Access-Control-Allow-Headers Content-Type' >> ~/haproxy.cfg && \
+        /usr/local/sbin/haproxy -f ~/haproxy.cfg -db"
+  
+  api1:
+    image: tiangolo/uwsgi-nginx-flask
+    ports:
+      - "8001:8001"
+    networks:
+      - app-network
+    command: >-
+      /bin/sh -c "pip install flask-cors && \
+      echo 'from flask import Flask, request, jsonify' > app1.py && \
+      echo 'from flask_cors import CORS' >> app1.py && \
+      echo 'app = Flask(__name__)' >> app1.py && \
+      echo 'CORS(app)' >> app1.py && \ 
+      echo '' >> app1.py && \
+      echo \"@app.route('/', methods=['POST','GET'])\" >> app1.py && \
+      echo 'def api1() -> str:' >> app1.py && \
+      echo '    data = request.data.decode(\"utf-8\")' >> app1.py && \
+      echo \"    print(f'Received data: {data}')\" >> app1.py && \
+      echo \"    return jsonify({'message': 'API 1 received data:' + data})\" >> app1.py && \
+      echo '' >> app1.py && \
+      echo 'if __name__ == \"__main__\":' >> app1.py && \
+      echo \"    app.run(host='0.0.0.0', port=8001)\" >> app1.py && \
+      python app1.py"
+
+  api2:
+    image: tiangolo/uwsgi-nginx-flask
+    ports:
+      - "8002:8002"
+    networks:
+      - app-network
+    command: >-
+      /bin/sh -c "pip install flask-cors && \
+      echo 'from flask import Flask, request, jsonify' > app2.py && \
+      echo 'from flask_cors import CORS' >> app2.py && \
+      echo 'app = Flask(__name__)' >> app2.py && \
+      echo 'CORS(app)' >> app1.py && \ 
+      echo '' >> app2.py && \
+      echo \"@app.route('/', methods=['POST','GET'])\" >> app2.py && \
+      echo 'def api2() -> str:' >> app2.py && \
+      echo '    data = request.data.decode(\"utf-8\")' >> app2.py && \
+      echo \"    print(f'Received data: {data}')\" >> app2.py && \
+      echo \"    return jsonify({'message': 'API 2 received data:' + data})\" >> app2.py && \
+      echo '' >> app2.py && \
+      echo 'if __name__ == \"__main__\":' >> app2.py && \
+      echo \"    app.run(host='0.0.0.0', port=8002)\" >> app2.py && \
+      python app2.py"
+
+  api3:
+    image: tiangolo/uwsgi-nginx-flask
+    ports:
+      - "8003:8003"
+    networks:
+      - app-network
+    command: >-
+      /bin/sh -c "pip install flask-cors && \
+      echo 'from flask import Flask, request, jsonify' > app3.py && \
+      echo 'from flask_cors import CORS' >> app3.py && \
+      echo 'app = Flask(__name__)' >> app3.py && \
+      echo 'CORS(app)' >> app1.py && \
+      echo '' >> app3.py && \
+      echo \"@app.route('/', methods=['POST','GET'])\" >> app3.py && \
+      echo 'def api3() -> str:' >> app3.py && \
+      echo '    data = request.data.decode(\"utf-8\")' >> app3.py && \
+      echo \"    print(f'Received data: {data}')\" >> app3.py && \
+      echo \"    return jsonify({'message': 'API 3 received data:' + data})\" >> app3.py && \
+      echo '' >> app3.py && \
+      echo 'if __name__ == \"__main__\":' >> app3.py && \
+      echo \"    app.run(host='0.0.0.0', port=8003)\" >> app3.py && \
+      python app3.py"
+
+networks:
+  app-network:
